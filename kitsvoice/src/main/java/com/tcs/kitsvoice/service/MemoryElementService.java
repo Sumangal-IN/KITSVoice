@@ -22,4 +22,11 @@ public class MemoryElementService {
 		return memoryElementRepository.findByCallerSidAndVariable(callerSid, variable);
 	}
 
+	public void delete(String callerSid, String variable) {
+		List<MemoryElement> memoryElementList = memoryElementRepository.findByCallerSidAndVariable(callerSid, variable);
+		if (!memoryElementList.isEmpty()) {
+			memoryElementRepository.delete(memoryElementList.get(0));
+		}
+	}
+
 }
