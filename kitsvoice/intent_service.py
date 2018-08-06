@@ -22,6 +22,16 @@ from flask import request
 # things we need to convert ndarray to string
 from json_tricks import dump, dumps, load, loads, strip_comments
 
+# things we need to connect with MySQL
+import mysql.connector as dbConnect
+
+# connection with MySQL
+mydb = dbConnect.connect(
+  host="localhost",
+  user="root",
+  database="voiceapp"
+)
+
 # create app for webservice
 app = Flask(__name__)
 
@@ -99,9 +109,22 @@ def classify(sentence):
 # load our saved model
 model.load('./model.tflearn')
 
-@app.route('/process/<text>')
-def say_hi(text):
+@app.route('/process/<text>', methods=['GET'])
+def process(text):
     return dumps(classify(text))
+  
+@app.route('/getIntent/<text>', methods=['GET'])
+def getIntent(text):
+    return dumps(classify(text)[0])
+
+@app.route('/executionRule/<intent>', methods=['GET'])
+def executionRule(intent):
+    db_intent_rule = mydb.cursor()
+    db_intent_rule.execute("select * from intentexecution where intent='"+intent+"' order by step desc")
+    rules = []
+    for row in db_intent_rule:
+        rules.append(row[2]+"#"+row[3])
+    return dumps(rules)
 
 # start the webservice
 app.run(host='0.0.0.0', port=8000)
