@@ -67,7 +67,7 @@ public class AppController {
 	@ResponseBody
 	public String attendCall(@RequestParam("Called") String callerNumber, @RequestParam("CallSid") String callSid) {
 		callerIDRepository.save(new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())));
-		Say say = new Say.Builder("Hello, How can I help you today?").build();
+		Say say = new Say.Builder("Hello, Welcome to virtual call center").build();
 		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 
@@ -86,30 +86,34 @@ public class AppController {
 	@RequestMapping(value = "/completed", method = RequestMethod.POST, produces = { "application/xml" })
 	@ResponseBody
 	public String finalresult(@RequestParam("SpeechResult") String speechResult, @RequestParam("Confidence") double confidence, @RequestParam("CallSid") String callerSid) {
+		System.out.println("speechResult: " + speechResult);
+		speechResult = filterTranscript(speechResult);
 		callLogRepository.save(new CallLog(callerSid, "IN", "abcd", "xyz", new Timestamp(System.currentTimeMillis())));
 		System.out.println("COMPLETE " + speechResult + " Confidence: " + confidence);
 		RestTemplate restTemplate = new RestTemplate();
 		String intents = restTemplate.getForObject("https://fec63322.ngrok.io/getIntent/{speech}", String.class, valueSubsitutionForType(speechResult));
 		JsonElement intent = parser.parse(intents);
 		System.out.println(intent.getAsJsonArray().get(0).getAsString());
-		//
-		// Say say = new Say.Builder("Next sentence please").build();
-		// Gather gather = new
-		// Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed")/*
-		// .partialResultCallback("/partial")
-		// */.method(HttpMethod.POST).speechTimeout("auto").say(say).build();
-		// Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
-		//
-		// VoiceResponse response = new
-		// VoiceResponse.Builder().gather(gather).say(say2).build();
-		//
-		// try {
-		// System.out.println(response.toXml());
-		// } catch (TwiMLException e) {
-		// e.printStackTrace();
-		// }
-		// return response.toXml();
 		return processIntent(callerSid, intent.getAsJsonArray().get(0).getAsString(), speechResult);
+	}
+
+	private String filterTranscript(String speechResult) {
+		speechResult=speechResult.replaceAll("\\+", "");
+		speechResult=speechResult.replaceAll("  ", " ");
+		speechResult=speechResult.replaceAll("one ", "1");
+		speechResult=speechResult.replaceAll("two ", "2");
+		speechResult=speechResult.replaceAll("three ", "3");
+		speechResult=speechResult.replaceAll("four ", "4");
+		speechResult=speechResult.replaceAll("five ", "5");
+		speechResult=speechResult.replaceAll("six ", "6");
+		speechResult=speechResult.replaceAll("seven ", "7");
+		speechResult=speechResult.replaceAll("eight ", "8");
+		speechResult=speechResult.replaceAll("nine ", "9");
+		speechResult=speechResult.replaceAll("zero ", "0");
+		speechResult=speechResult.replaceAll("five", "5");
+		speechResult=speechResult.replaceAll("-", "");
+		System.out.println(speechResult);
+		return speechResult;
 	}
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
@@ -145,6 +149,10 @@ public class AppController {
 				}
 				break;
 			case "EXECUTE":
+				if (actionElement.getParameter().contains("Cancel") || actionElement.getParameter().contains("Status")) {
+					actionElementService.pop(callerSid);
+					break;
+				}
 				context_path = actionElement.getParameter();
 				context_path = variableSubsitutionFromMemory(context_path, callerSid);
 				String serviceURL = addProtocolAndHost(context_path);
@@ -169,6 +177,8 @@ public class AppController {
 				memoryElementService.put(new MemoryElement(callerSid, variable, value));
 				actionElementService.pop(callerSid);
 				break;
+			case "POP_LAST_ACTION":
+				actionElementService.pop(callerSid);
 			}
 		}
 	}
@@ -198,7 +208,7 @@ public class AppController {
 	}
 
 	public String addProtocolAndHost(String contextPath) {
-		return "http://localhost:9090" + contextPath;
+		return "http://localhost:8000" + contextPath;
 	}
 
 	public String variableSubsitutionFromMemory(String input, String callerSid) {
