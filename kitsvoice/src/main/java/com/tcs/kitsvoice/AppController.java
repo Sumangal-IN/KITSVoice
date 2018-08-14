@@ -1,6 +1,7 @@
 package com.tcs.kitsvoice;
 
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map.Entry;
@@ -36,6 +37,7 @@ import com.twilio.twiml.TwiMLException;
 import com.twilio.twiml.VoiceResponse;
 import com.twilio.twiml.voice.Gather;
 import com.twilio.twiml.voice.Say;
+
 
 @EnableAutoConfiguration
 @Controller
@@ -87,7 +89,7 @@ public class AppController {
 	@ResponseBody
 	public String finalresult(@RequestParam("SpeechResult") String speechResult, @RequestParam("Confidence") double confidence, @RequestParam("CallSid") String callerSid) {
 		System.out.println("speechResult: " + speechResult);
-		speechResult = filterTranscript(speechResult);
+		speechResult = filter(speechResult);
 		callLogRepository.save(new CallLog(callerSid, "IN", "abcd", "xyz", new Timestamp(System.currentTimeMillis())));
 		System.out.println("COMPLETE " + speechResult + " Confidence: " + confidence);
 		RestTemplate restTemplate = new RestTemplate();
@@ -95,25 +97,6 @@ public class AppController {
 		JsonElement intent = parser.parse(intents);
 		System.out.println(intent.getAsJsonArray().get(0).getAsString());
 		return processIntent(callerSid, intent.getAsJsonArray().get(0).getAsString(), speechResult);
-	}
-
-	private String filterTranscript(String speechResult) {
-		speechResult=speechResult.replaceAll("\\+", "");
-		speechResult=speechResult.replaceAll("  ", " ");
-		speechResult=speechResult.replaceAll("one ", "1");
-		speechResult=speechResult.replaceAll("two ", "2");
-		speechResult=speechResult.replaceAll("three ", "3");
-		speechResult=speechResult.replaceAll("four ", "4");
-		speechResult=speechResult.replaceAll("five ", "5");
-		speechResult=speechResult.replaceAll("six ", "6");
-		speechResult=speechResult.replaceAll("seven ", "7");
-		speechResult=speechResult.replaceAll("eight ", "8");
-		speechResult=speechResult.replaceAll("nine ", "9");
-		speechResult=speechResult.replaceAll("zero ", "0");
-		speechResult=speechResult.replaceAll("five", "5");
-		speechResult=speechResult.replaceAll("-", "");
-		System.out.println(speechResult);
-		return speechResult;
 	}
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
@@ -234,6 +217,65 @@ public class AppController {
 	public String getTestOutput() {
 		List<TestIntent> testIntents = testIntentRepository.findAll();
 		return testIntents.size() + " ";
+	}
+	
+//	public static void main(String args[])
+//	{
+//		ArrayList<String> lines=new ArrayList<>();
+//		lines.add("my    number is +1-2 five six 78 2-3-4. I'll be   available today");
+//		lines.add("asFd . 8s fg; @  k .$sd  f4; @  1 .$3d");
+//		
+//		for(String line:lines)
+//		{
+//			System.out.println(filter(line.toLowerCase()));
+//		}
+//	}
+	
+	private static String filter(String text)
+	{
+		// Remove multilple spaces (at begining)
+		while(text.contains("  "))
+			text=text.replaceAll("  ", " ");
+		// Resolve contraction
+		text=text.replaceAll("let's", "let us");
+		text=text.replaceAll("he's", "he has");
+		text=text.replaceAll("she's", "she has");
+		text=text.replaceAll("won't", "will not");
+		text=text.replaceAll("n't", " not");
+		text=text.replaceAll("'m", " am");
+		text=text.replaceAll("'s", " is");
+		text=text.replaceAll("'ve", " have");
+		text=text.replaceAll("'re", " are");
+		text=text.replaceAll("'d", " had");
+		text=text.replaceAll("'ll", " will");
+		// text to digit
+		text=text.replaceAll("one", "1");
+		text=text.replaceAll("two", "2");
+		text=text.replaceAll("three", "3");
+		text=text.replaceAll("four", "4");
+		text=text.replaceAll("five", "5");
+		text=text.replaceAll("six", "6");
+		text=text.replaceAll("seven", "7");
+		text=text.replaceAll("eight", "8");
+		text=text.replaceAll("nine", "9");
+		text=text.replaceAll("zero", "0");		
+		// Symbol removal
+		Matcher matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
+		while (matcher.find()) {
+			text=text.replace(matcher.group(0),"");
+			matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
+		}
+		// Digit compaction
+		matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
+		while (matcher.find()) {
+			text=text.replace(matcher.group(0),matcher.group(0).replaceAll("\\s+", ""));
+		    matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
+		}
+		//Remove multilple spaces (at end)
+		while(text.contains("  "))
+			text=text.replaceAll("  ", " ");
+		
+		return text;
 	}
 
 }
