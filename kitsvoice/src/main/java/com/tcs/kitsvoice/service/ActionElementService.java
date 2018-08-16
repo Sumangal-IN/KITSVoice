@@ -19,13 +19,36 @@ public class ActionElementService {
 	}
 
 	public ActionElement pop(String callerSid) {
-		List<ActionElement> actionElement = actionElementRepository.findByCallerSidOrderByIdDesc(callerSid);
-		actionElementRepository.delete(actionElement.get(0));
-		return actionElement.get(0);
+		List<ActionElement> actionElements = actionElementRepository.findByCallerSidOrderByIdDesc(callerSid);
+		actionElementRepository.delete(actionElements.get(0));
+		return actionElements.get(0);
 	}
 	
 	public ActionElement peek(String callerSid) {
-		List<ActionElement> actionElement = actionElementRepository.findByCallerSidOrderByIdDesc(callerSid);
-		return actionElement.get(0);
+		List<ActionElement> actionElements = actionElementRepository.findByCallerSidOrderByIdDesc(callerSid);
+		return actionElements.get(0);
+	}
+	
+	public Boolean isEmpty(String callerSid) {
+		List<ActionElement> actionElements = actionElementRepository.findByCallerSidOrderByIdDesc(callerSid);
+		return actionElements.isEmpty();
+	}
+
+	public void remove(String callerSid, String type, String element) {
+		List<ActionElement> actionElements=null;
+		switch(type)
+		{
+		case "intent":
+			actionElements= actionElementRepository.findByCallerSidAndIntent(callerSid,element);
+			break;
+		case "action":
+			actionElements = actionElementRepository.findByCallerSidAndAction(callerSid,element);
+			break;
+		}
+		
+		for(ActionElement actionElement:actionElements)
+		{
+			actionElementRepository.delete(actionElement);
+		}
 	}
 }

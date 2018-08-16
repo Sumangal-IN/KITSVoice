@@ -15,6 +15,10 @@ public class MemoryElementService {
 	private MemoryElementRepository memoryElementRepository;
 
 	public void put(MemoryElement memoryElement) {
+		List<MemoryElement> memoryElements = memoryElementRepository.findByCallerSidAndVariable(memoryElement.getCallerSid(), memoryElement.getVariable());
+		if (!memoryElements.isEmpty()) {
+			delete(memoryElement.getCallerSid(), memoryElement.getVariable());
+		}
 		memoryElementRepository.save(memoryElement);
 	}
 

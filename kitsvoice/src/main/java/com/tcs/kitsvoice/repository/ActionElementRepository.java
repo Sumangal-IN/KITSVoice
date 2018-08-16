@@ -12,6 +12,10 @@ public interface ActionElementRepository extends JpaRepository<ActionElement, Lo
 
 	List<ActionElement> findAll();
 
-	List<ActionElement> findByCallerSidOrderByIdDesc(String CallerSid);
+	List<ActionElement> findByCallerSidOrderByIdDesc(String callerSid);
+
+	List<ActionElement> findByCallerSidAndIntent(String callerSid, String intent);
+
+	List<ActionElement> findByCallerSidAndAction(String CallerSid, String action);
 
 }

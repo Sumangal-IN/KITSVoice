@@ -1,7 +1,6 @@
 package com.tcs.kitsvoice;
 
 import java.sql.Timestamp;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map.Entry;
@@ -22,11 +21,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import com.tcs.kitsvoice.model.ActionElement;
-import com.tcs.kitsvoice.model.CallLog;
 import com.tcs.kitsvoice.model.CallerID;
 import com.tcs.kitsvoice.model.MemoryElement;
 import com.tcs.kitsvoice.model.TestIntent;
-import com.tcs.kitsvoice.repository.CallLogRepository;
 import com.tcs.kitsvoice.repository.CallerIDRepository;
 import com.tcs.kitsvoice.repository.TestIntentRepository;
 import com.tcs.kitsvoice.service.ActionElementService;
@@ -38,15 +35,11 @@ import com.twilio.twiml.VoiceResponse;
 import com.twilio.twiml.voice.Gather;
 import com.twilio.twiml.voice.Say;
 
-
 @EnableAutoConfiguration
 @Controller
 public class AppController {
 	@Autowired
 	private CallerIDRepository callerIDRepository;
-
-	@Autowired
-	private CallLogRepository callLogRepository;
 
 	@Autowired
 	private TestIntentRepository testIntentRepository;
@@ -87,11 +80,9 @@ public class AppController {
 
 	@RequestMapping(value = "/completed", method = RequestMethod.POST, produces = { "application/xml" })
 	@ResponseBody
-	public String finalresult(@RequestParam("SpeechResult") String speechResult, @RequestParam("Confidence") double confidence, @RequestParam("CallSid") String callerSid) {
+	public String finalresult(@RequestParam("SpeechResult") String speechResult, @RequestParam("CallSid") String callerSid) {
 		System.out.println("speechResult: " + speechResult);
 		speechResult = filter(speechResult);
-		callLogRepository.save(new CallLog(callerSid, "IN", "abcd", "xyz", new Timestamp(System.currentTimeMillis())));
-		System.out.println("COMPLETE " + speechResult + " Confidence: " + confidence);
 		RestTemplate restTemplate = new RestTemplate();
 		String intents = restTemplate.getForObject("https://fec63322.ngrok.io/getIntent/{speech}", String.class, valueSubsitutionForType(speechResult));
 		JsonElement intent = parser.parse(intents);
@@ -113,57 +104,93 @@ public class AppController {
 			String variable = null;
 			String value = null;
 			String speech[] = null;
-			String context_path = null;
-			String randomSpeech = null;
+			String contextPath = null;
 			switch (actionElement.getAction()) {
 			case "VARIABLE_REQUIRED":
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
 				speech = parameter.split("\\|")[1].split(":");
-				if (memoryElementService.get(callerSid, variable).isEmpty()) {
-					randomSpeech = speech[(int) (System.currentTimeMillis() % speech.length)];
-					Say say = new Say.Builder(randomSpeech).build();
-					Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
-					Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
-					VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
-					return response.toXml();
-				} else {
-					actionElementService.pop(callerSid);
-				}
+				if (memoryElementService.get(callerSid, variable).isEmpty())
+					return makeSpeech(speech, callerSid);
+				actionElementService.pop(callerSid);
 				break;
 			case "EXECUTE":
-				if (actionElement.getParameter().contains("Cancel") || actionElement.getParameter().contains("Status")) {
-					actionElementService.pop(callerSid);
-					break;
-				}
-				context_path = actionElement.getParameter();
-				context_path = variableSubsitutionFromMemory(context_path, callerSid);
-				String serviceURL = addProtocolAndHost(context_path);
-				System.out.println(serviceURL);
-				String resultAsJSON = restTemplate.getForObject(serviceURL, String.class);
+				// contextPath = actionElement.getParameter();
+				// contextPath = variableSubsitutionFromMemory(contextPath, callerSid);
+				// String serviceURL = addProtocolAndHost(contextPath);
+				// String resultAsJSON = restTemplate.getForObject(serviceURL, String.class);
+				String resultAsJSON = "{\"orderStatus\":\"Ready for shipment\"}";
 				populateMemoryFromJSON(callerSid, resultAsJSON);
 				actionElementService.pop(callerSid);
 				break;
 			case "PLAY_RANDOM":
 				speech = actionElement.getParameter().split(":");
-				randomSpeech = speech[(int) (System.currentTimeMillis() % speech.length)];
-				randomSpeech = variableSubsitutionFromMemory(randomSpeech, callerSid);
-				Say say = new Say.Builder(randomSpeech).build();
-				Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
-				Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
-				VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 				actionElementService.pop(callerSid);
-				return response.toXml();
+				return makeSpeech(speech, callerSid);
 			case "EVALUATE_VARIABLE":
-				variable = actionElement.getParameter();
-				value = getNumber(speechResult);
+				parameter = actionElement.getParameter();
+				String varType = parameter.split("\\|")[0];
+				switch (varType) {
+				case "dnumber":
+					value = getNumber(speechResult);
+					break;
+				case "dname":
+					value = speechResult;
+					break;
+				}
+				variable = parameter.split("\\|")[1];
 				memoryElementService.put(new MemoryElement(callerSid, variable, value));
 				actionElementService.pop(callerSid);
 				break;
 			case "POP_LAST_ACTION":
 				actionElementService.pop(callerSid);
+				break;
+			case "CLEAR_STACK":
+				parameter = actionElement.getParameter();
+				String type = parameter.split("\\|")[0];
+				String element = parameter.split("\\|")[1];
+				actionElementService.pop(callerSid);
+				actionElementService.remove(callerSid, type, element);
+				break;
+			case "SPECIAL_NO":
+				actionElementService.pop(callerSid);
+				if (actionElementService.isEmpty(callerSid))
+					return makeSpeech("Thank you, have a nice day", callerSid, true);
+				else {
+					actionElement = actionElementService.peek(callerSid);
+					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
+					return makeSpeech("Is there anything else I can help you with?", callerSid);
+				}
 			}
 		}
+	}
+
+	private String makeSpeech(String speech, String callerSid) {
+		return makeSpeech(speech, callerSid, false);
+	}
+
+	private String makeSpeech(String speech, String callerSid, Boolean endCall) {
+		speech = variableSubsitutionFromMemory(speech, callerSid);
+		if (endCall) {
+			Say say = new Say.Builder(speech).build();
+			VoiceResponse response = new VoiceResponse.Builder().say(say).build();
+			return response.toXml();
+		}
+		Say say = new Say.Builder(speech).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
+		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
+		return response.toXml();
+	}
+
+	private String makeSpeech(String[] speech, String callerSid) {
+		String randomSpeech = speech[(int) (System.currentTimeMillis() % speech.length)];
+		randomSpeech = variableSubsitutionFromMemory(randomSpeech, callerSid);
+		Say say = new Say.Builder(randomSpeech).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
+		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
+		return response.toXml();
 	}
 
 	public String valueSubsitutionForType(String input) {
@@ -196,7 +223,7 @@ public class AppController {
 
 	public String variableSubsitutionFromMemory(String input, String callerSid) {
 		while (input.contains("[")) {
-			String placeholder = input.substring(input.indexOf("["), input.indexOf("]") + 1);
+			String placeholder = input.substring(input.indexOf('['), input.indexOf(']') + 1);
 			List<MemoryElement> replacements = memoryElementService.get(callerSid, placeholder.substring(1, placeholder.length() - 1));
 			if (!replacements.isEmpty())
 				input = input.replace(placeholder, replacements.get(0).getValue());
@@ -206,75 +233,56 @@ public class AppController {
 		return input;
 	}
 
-	@RequestMapping(value = "/partial", method = RequestMethod.POST, produces = { "application/xml" })
-	@ResponseBody
-	public void partialresult(@RequestParam("UnstableSpeechResult") String speechResult, @RequestParam("Stability") double stability) {
-		System.out.println("PARTIAL " + speechResult + " Stability: " + stability);
-	}
-
 	@RequestMapping(value = "/getTestOutput", method = RequestMethod.GET)
 	@ResponseBody
 	public String getTestOutput() {
 		List<TestIntent> testIntents = testIntentRepository.findAll();
 		return testIntents.size() + " ";
 	}
-	
-//	public static void main(String args[])
-//	{
-//		ArrayList<String> lines=new ArrayList<>();
-//		lines.add("my    number is +1-2 five six 78 2-3-4. I'll be   available today");
-//		lines.add("asFd . 8s fg; @  k .$sd  f4; @  1 .$3d");
-//		
-//		for(String line:lines)
-//		{
-//			System.out.println(filter(line.toLowerCase()));
-//		}
-//	}
-	
-	private static String filter(String text)
-	{
+
+	private static String filter(String text) {
 		// Remove multilple spaces (at begining)
-		while(text.contains("  "))
-			text=text.replaceAll("  ", " ");
+		while (text.contains("  "))
+			text = text.replaceAll("  ", " ");
 		// Resolve contraction
-		text=text.replaceAll("let's", "let us");
-		text=text.replaceAll("he's", "he has");
-		text=text.replaceAll("she's", "she has");
-		text=text.replaceAll("won't", "will not");
-		text=text.replaceAll("n't", " not");
-		text=text.replaceAll("'m", " am");
-		text=text.replaceAll("'s", " is");
-		text=text.replaceAll("'ve", " have");
-		text=text.replaceAll("'re", " are");
-		text=text.replaceAll("'d", " had");
-		text=text.replaceAll("'ll", " will");
+		text = text.replaceAll("let's", "let us");
+		text = text.replaceAll("he's", "he has");
+		text = text.replaceAll("she's", "she has");
+		text = text.replaceAll("won't", "will not");
+		text = text.replaceAll("n't", " not");
+		text = text.replaceAll("'m", " am");
+		text = text.replaceAll("'s", " is");
+		text = text.replaceAll("'ve", " have");
+		text = text.replaceAll("'re", " are");
+		text = text.replaceAll("'d", " had");
+		text = text.replaceAll("'ll", " will");
 		// text to digit
-		text=text.replaceAll("one", "1");
-		text=text.replaceAll("two", "2");
-		text=text.replaceAll("three", "3");
-		text=text.replaceAll("four", "4");
-		text=text.replaceAll("five", "5");
-		text=text.replaceAll("six", "6");
-		text=text.replaceAll("seven", "7");
-		text=text.replaceAll("eight", "8");
-		text=text.replaceAll("nine", "9");
-		text=text.replaceAll("zero", "0");		
+		text = text.replaceAll("one", "1");
+		text = text.replaceAll("two", "2");
+		text = text.replaceAll("three", "3");
+		text = text.replaceAll("four", "4");
+		text = text.replaceAll("five", "5");
+		text = text.replaceAll("six", "6");
+		text = text.replaceAll("seven", "7");
+		text = text.replaceAll("eight", "8");
+		text = text.replaceAll("nine", "9");
+		text = text.replaceAll("zero", "0");
 		// Symbol removal
 		Matcher matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
 		while (matcher.find()) {
-			text=text.replace(matcher.group(0),"");
+			text = text.replace(matcher.group(0), "");
 			matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
 		}
 		// Digit compaction
 		matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
 		while (matcher.find()) {
-			text=text.replace(matcher.group(0),matcher.group(0).replaceAll("\\s+", ""));
-		    matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
+			text = text.replace(matcher.group(0), matcher.group(0).replaceAll("\\s+", ""));
+			matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
 		}
-		//Remove multilple spaces (at end)
-		while(text.contains("  "))
-			text=text.replaceAll("  ", " ");
-		
+		// Remove multilple spaces (at end)
+		while (text.contains("  "))
+			text = text.replaceAll("  ", " ");
+
 		return text;
 	}
 
