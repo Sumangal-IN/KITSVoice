@@ -22,8 +22,11 @@ public class MemoryElementService {
 		memoryElementRepository.save(memoryElement);
 	}
 
-	public List<MemoryElement> get(String callerSid, String variable) {
-		return memoryElementRepository.findByCallerSidAndVariable(callerSid, variable);
+	public MemoryElement get(String callerSid, String variable) {
+		List<MemoryElement> memoryElements = memoryElementRepository.findByCallerSidAndVariable(callerSid, variable);
+		if (!memoryElements.isEmpty())
+			return memoryElements.get(0);
+		return null;
 	}
 
 	public void delete(String callerSid, String variable) {

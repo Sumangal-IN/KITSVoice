@@ -91,13 +91,7 @@ public class AppController {
 	}
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
-		RestTemplate restTemplate = new RestTemplate();
-		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class, intent);
-		JsonElement ruleSet = parser.parse(rules);
-		for (JsonElement rule : ruleSet.getAsJsonArray()) {
-			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#")[0], rule.getAsString().split("#")[1]));
-			System.out.println(rule.getAsString());
-		}
+		loadIntent(callerSid, intent);
 		while (true) {
 			ActionElement actionElement = actionElementService.peek(callerSid);
 			String parameter = null;
@@ -110,7 +104,7 @@ public class AppController {
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
 				speech = parameter.split("\\|")[1].split(":");
-				if (memoryElementService.get(callerSid, variable).isEmpty())
+				if (memoryElementService.get(callerSid, variable) != null)
 					return makeSpeech(speech, callerSid);
 				actionElementService.pop(callerSid);
 				break;
@@ -161,7 +155,38 @@ public class AppController {
 					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 					return makeSpeech("Is there anything else I can help you with?", callerSid);
 				}
+			case "LOAD_INTENT":
+				actionElementService.pop(callerSid);
+				parameter = actionElement.getParameter();
+				loadIntent(callerSid, parameter);
+				break;
+			case "VALIDATE_VARIABLE":
+				parameter = actionElement.getParameter();
+				// <variable to check>|<value to compare>|<variables to remove from
+				// memory>|<intent to load>|<message to play>|
+				variable = parameter.split("\\|")[0];
+				String expectedValue = parameter.split("\\|")[1];
+				List<String> variablesToRemove = Arrays.asList(parameter.split("\\|")[2].split(","));
+				String intentToLoad = parameter.split("\\|")[3];
+				speech = parameter.split("\\|")[4].split(":");
+				if (memoryElementService.get(callerSid, variable) != null && memoryElementService.get(callerSid, variable).getValue().equals(expectedValue)) {
+					for (String variableToRemove : variablesToRemove)
+						memoryElementService.delete(callerSid, variableToRemove);
+					actionElementService.remove(callerSid, "intent", intent);
+					actionElementService.push(new ActionElement(callerSid, intent, "LOAD_INTENT", intentToLoad));
+					return makeSpeech(speech, callerSid);
+				}
+				break;
 			}
+		}
+	}
+
+	private void loadIntent(String callerSid, String intent) {
+		RestTemplate restTemplate = new RestTemplate();
+		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class, intent);
+		JsonElement ruleSet = parser.parse(rules);
+		for (JsonElement rule : ruleSet.getAsJsonArray()) {
+			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#")[0], rule.getAsString().split("#")[1]));
 		}
 	}
 
@@ -224,9 +249,9 @@ public class AppController {
 	public String variableSubsitutionFromMemory(String input, String callerSid) {
 		while (input.contains("[")) {
 			String placeholder = input.substring(input.indexOf('['), input.indexOf(']') + 1);
-			List<MemoryElement> replacements = memoryElementService.get(callerSid, placeholder.substring(1, placeholder.length() - 1));
-			if (!replacements.isEmpty())
-				input = input.replace(placeholder, replacements.get(0).getValue());
+			MemoryElement replacements = memoryElementService.get(callerSid, placeholder.substring(1, placeholder.length() - 1));
+			if (replacements != null)
+				input = input.replace(placeholder, replacements.getValue());
 			else
 				break;
 		}
