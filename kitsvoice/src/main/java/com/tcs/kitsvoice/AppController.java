@@ -99,12 +99,13 @@ public class AppController {
 			String value = null;
 			String speech[] = null;
 			String contextPath = null;
+			String expectedValue = null;
 			switch (actionElement.getAction()) {
 			case "VARIABLE_REQUIRED":
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
 				speech = parameter.split("\\|")[1].split(":");
-				if (memoryElementService.get(callerSid, variable) != null)
+				if (memoryElementService.get(callerSid, variable) == null)
 					return makeSpeech(speech, callerSid);
 				actionElementService.pop(callerSid);
 				break;
@@ -113,7 +114,7 @@ public class AppController {
 				// contextPath = variableSubsitutionFromMemory(contextPath, callerSid);
 				// String serviceURL = addProtocolAndHost(contextPath);
 				// String resultAsJSON = restTemplate.getForObject(serviceURL, String.class);
-				String resultAsJSON = "{\"orderStatus\":\"Ready for shipment\"}";
+				String resultAsJSON = "{\"orderStatus\":\"Ready for shipment\",\"orderNumber_rel_customerID\":\"true\",\"orderCancellable\":\"false\",\"reasonOrderNotCancellable\":\"order already dispatched\"}";
 				populateMemoryFromJSON(callerSid, resultAsJSON);
 				actionElementService.pop(callerSid);
 				break;
@@ -124,6 +125,7 @@ public class AppController {
 			case "EVALUATE_VARIABLE":
 				parameter = actionElement.getParameter();
 				String varType = parameter.split("\\|")[0];
+				variable = parameter.split("\\|")[1];
 				switch (varType) {
 				case "dnumber":
 					value = getNumber(speechResult);
@@ -132,7 +134,6 @@ public class AppController {
 					value = speechResult;
 					break;
 				}
-				variable = parameter.split("\\|")[1];
 				memoryElementService.put(new MemoryElement(callerSid, variable, value));
 				actionElementService.pop(callerSid);
 				break;
@@ -161,21 +162,48 @@ public class AppController {
 				loadIntent(callerSid, parameter);
 				break;
 			case "VALIDATE_VARIABLE":
+				actionElementService.pop(callerSid);
 				parameter = actionElement.getParameter();
-				// <variable to check>|<value to compare>|<variables to remove from
-				// memory>|<intent to load>|<message to play>|
 				variable = parameter.split("\\|")[0];
-				String expectedValue = parameter.split("\\|")[1];
+				expectedValue = parameter.split("\\|")[1];
 				List<String> variablesToRemove = Arrays.asList(parameter.split("\\|")[2].split(","));
 				String intentToLoad = parameter.split("\\|")[3];
 				speech = parameter.split("\\|")[4].split(":");
 				if (memoryElementService.get(callerSid, variable) != null && memoryElementService.get(callerSid, variable).getValue().equals(expectedValue)) {
 					for (String variableToRemove : variablesToRemove)
 						memoryElementService.delete(callerSid, variableToRemove);
-					actionElementService.remove(callerSid, "intent", intent);
-					actionElementService.push(new ActionElement(callerSid, intent, "LOAD_INTENT", intentToLoad));
+					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
+					if (!intentToLoad.equals(""))
+						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT", intentToLoad));
 					return makeSpeech(speech, callerSid);
 				}
+				break;
+			case "RESOLVE_TYPE_NUMBER":
+				actionElementService.pop(callerSid);
+				if (actionElementService.peek(callerSid).getAction().equals("VARIABLE_REQUIRED")) {
+					variable = actionElementService.peek(callerSid).getParameter().split("\\|")[0];
+					value = getNumber(speechResult);
+					memoryElementService.put(new MemoryElement(callerSid, variable, value));
+				}
+				break;
+			case "MEMORY_INSERT":
+				parameter = actionElement.getParameter();
+				variable = parameter.split("\\|")[0];
+				value = parameter.split("\\|")[1];
+				memoryElementService.put(new MemoryElement(callerSid, variable, value));
+				actionElementService.pop(callerSid);
+				break;
+			case "MEMORY_REMOVE":
+				variable = actionElement.getParameter();
+				memoryElementService.delete(callerSid, variable);
+				actionElementService.pop(callerSid);
+				break;
+			case "REMOVE_CURRENT_INTENT":
+				parameter = actionElement.getParameter();
+				variable = parameter.split("\\|")[0];
+				expectedValue = parameter.split("\\|")[1];
+				if (memoryElementService.get(callerSid, variable) != null && memoryElementService.get(callerSid, variable).getValue().equals(expectedValue))
+					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 				break;
 			}
 		}
@@ -186,6 +214,7 @@ public class AppController {
 		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class, intent);
 		JsonElement ruleSet = parser.parse(rules);
 		for (JsonElement rule : ruleSet.getAsJsonArray()) {
+			System.out.println(rule);
 			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#")[0], rule.getAsString().split("#")[1]));
 		}
 	}
