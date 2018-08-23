@@ -7,6 +7,8 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.stereotype.Controller;
@@ -19,7 +21,6 @@ import org.springframework.web.client.RestTemplate;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-
 import com.tcs.kitsvoice.model.ActionElement;
 import com.tcs.kitsvoice.model.CallerID;
 import com.tcs.kitsvoice.model.MemoryElement;
@@ -30,7 +31,6 @@ import com.tcs.kitsvoice.service.ActionElementService;
 import com.tcs.kitsvoice.service.MemoryElementService;
 
 import com.twilio.http.HttpMethod;
-import com.twilio.twiml.TwiMLException;
 import com.twilio.twiml.VoiceResponse;
 import com.twilio.twiml.voice.Gather;
 import com.twilio.twiml.voice.Say;
@@ -52,27 +52,18 @@ public class AppController {
 
 	JsonParser parser = new JsonParser();
 
-	@RequestMapping(value = "/test", method = RequestMethod.GET)
-	@ResponseBody
-	public String greeting() {
-		return "hello world";
-	}
+	private static Logger logger = LoggerFactory.getLogger(AppController.class);
 
 	@RequestMapping(value = "/attendCall", method = RequestMethod.POST, produces = { "application/xml" })
 	@ResponseBody
 	public String attendCall(@RequestParam("Called") String callerNumber, @RequestParam("CallSid") String callSid) {
 		callerIDRepository.save(new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())));
+		System.out.println("LOG_WATCH " + new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())).toString());
+		logger.info("LOG_WATCH " + new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())).toString());
 		Say say = new Say.Builder("Hello, Welcome to virtual call center").build();
 		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
-
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
-
-		try {
-			System.out.println(response.toXml());
-		} catch (TwiMLException e) {
-			e.printStackTrace();
-		}
 		return response.toXml();
 
 		// Contact number: 448081689319
@@ -91,7 +82,26 @@ public class AppController {
 	}
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
-		loadIntent(callerSid, intent);
+		if (!loadIntent(callerSid, intent, true)) {
+			String lastSpeech = "";
+			ActionElement actionElement = actionElementService.peek(callerSid);
+			if (actionElement.getAction().equals("PLAY_RANDOM")) {
+				String parameter = actionElement.getParameter();
+				String[] speech = parameter.split(":");
+				lastSpeech = getSpeech(speech, callerSid);
+			} else if (actionElementService.peek(callerSid).getAction().equals("VARIABLE_REQUIRED")) {
+				String parameter = actionElement.getParameter();
+				String[] speech = parameter.split("\\|")[1].split(":");
+				lastSpeech = getSpeech(speech, callerSid);
+			}
+			return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
+		}
+		if(intent.equals("EscapeIntent"))
+		{
+			ActionElement actionElement = actionElementService.peek(callerSid);
+			actionElementService.remove(callerSid, "intent", actionElement.getIntent());
+			return makeSpeech("Ok, is there anything else I can help you with?", callerSid);
+		}
 		while (true) {
 			ActionElement actionElement = actionElementService.peek(callerSid);
 			String parameter = null;
@@ -159,7 +169,7 @@ public class AppController {
 			case "LOAD_INTENT":
 				actionElementService.pop(callerSid);
 				parameter = actionElement.getParameter();
-				loadIntent(callerSid, parameter);
+				loadIntent(callerSid, parameter, false);
 				break;
 			case "VALIDATE_VARIABLE":
 				actionElementService.pop(callerSid);
@@ -174,7 +184,7 @@ public class AppController {
 						memoryElementService.delete(callerSid, variableToRemove);
 					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 					if (!intentToLoad.equals(""))
-						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT", intentToLoad));
+						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT", intentToLoad, null));
 					return makeSpeech(speech, callerSid);
 				}
 				break;
@@ -199,6 +209,7 @@ public class AppController {
 				actionElementService.pop(callerSid);
 				break;
 			case "REMOVE_CURRENT_INTENT":
+				actionElementService.pop(callerSid);
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
 				expectedValue = parameter.split("\\|")[1];
@@ -209,14 +220,27 @@ public class AppController {
 		}
 	}
 
-	private void loadIntent(String callerSid, String intent) {
+	private boolean loadIntent(String callerSid, String intent, boolean checkExpectedIntent) {
+		if (checkExpectedIntent && !actionElementService.isEmpty(callerSid)) {
+			boolean match_found = false;
+			List<String> expectedIntents = Arrays.asList(actionElementService.peek(callerSid).getExpectedIntent().split(","));
+			for (String expectedIntent : expectedIntents) {
+				if (expectedIntent!=null && expectedIntent.equals(intent)) {
+					match_found = true;
+					break;
+				}
+			}
+			if (!match_found)
+				return false;
+		}
 		RestTemplate restTemplate = new RestTemplate();
 		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class, intent);
 		JsonElement ruleSet = parser.parse(rules);
 		for (JsonElement rule : ruleSet.getAsJsonArray()) {
 			System.out.println(rule);
-			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#")[0], rule.getAsString().split("#")[1]));
+			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#").length > 0 ? rule.getAsString().split("#")[0] : null, rule.getAsString().split("#").length > 1 ? rule.getAsString().split("#")[1] : null, rule.getAsString().split("#").length > 2 ? rule.getAsString().split("#")[2] : null));
 		}
+		return true;
 	}
 
 	private String makeSpeech(String speech, String callerSid) {
@@ -237,9 +261,14 @@ public class AppController {
 		return response.toXml();
 	}
 
-	private String makeSpeech(String[] speech, String callerSid) {
+	private String getSpeech(String[] speech, String callerSid) {
 		String randomSpeech = speech[(int) (System.currentTimeMillis() % speech.length)];
 		randomSpeech = variableSubsitutionFromMemory(randomSpeech, callerSid);
+		return randomSpeech;
+	}
+
+	private String makeSpeech(String[] speech, String callerSid) {
+		String randomSpeech = getSpeech(speech, callerSid);
 		Say say = new Say.Builder(randomSpeech).build();
 		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();

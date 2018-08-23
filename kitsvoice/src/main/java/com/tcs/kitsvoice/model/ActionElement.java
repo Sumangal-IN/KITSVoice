@@ -27,17 +27,21 @@ public class ActionElement {
 
 	@Column(name = "parameter", nullable = false)
 	String parameter;
+	
+	@Column(name = "expected_intent", nullable = false)
+	String expectedIntent;
 
 	public ActionElement() {
 
 	}
 
-	public ActionElement(String callerSid, String intent, String action, String parameter) {
+	public ActionElement(String callerSid, String intent, String action, String parameter, String expectedIntent) {
 		super();
 		this.callerSid = callerSid;
 		this.intent = intent;
 		this.action = action;
 		this.parameter = parameter;
+		this.expectedIntent=expectedIntent;
 	}
 
 	public long getId() {
@@ -78,6 +82,19 @@ public class ActionElement {
 
 	public void setParameter(String parameter) {
 		this.parameter = parameter;
+	}
+
+	public String getExpectedIntent() {
+		return expectedIntent;
+	}
+
+	public void setExpectedIntent(String expectedIntent) {
+		this.expectedIntent = expectedIntent;
+	}
+
+	@Override
+	public String toString() {
+		return "ActionElement [id=" + id + ", callerSid=" + callerSid + ", intent=" + intent + ", action=" + action + ", parameter=" + parameter + ", expectedIntent=" + expectedIntent + "]";
 	}
 
 }

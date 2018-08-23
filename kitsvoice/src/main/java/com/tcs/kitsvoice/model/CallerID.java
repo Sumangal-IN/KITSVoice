@@ -59,4 +59,9 @@ public class CallerID {
 		this.callTime = callTime;
 	}
 
+	@Override
+	public String toString() {
+		return "CallerID [callerNumber=" + callerNumber + ", callerSid=" + callerSid + ", callTime=" + callTime + "]";
+	}
+
 }
