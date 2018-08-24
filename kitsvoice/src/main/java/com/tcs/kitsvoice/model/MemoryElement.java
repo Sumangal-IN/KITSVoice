@@ -22,6 +22,9 @@ public class MemoryElement {
 	@Column(name = "variable", nullable = false)
 	String variable;
 
+	@Column(name = "type", nullable = false)
+	String type;
+
 	@Column(name = "value", nullable = false)
 	String value;
 
@@ -29,10 +32,11 @@ public class MemoryElement {
 
 	}
 
-	public MemoryElement(String callerSid, String variable, String value) {
+	public MemoryElement(String callerSid, String variable, String type, String value) {
 		super();
 		this.callerSid = callerSid;
 		this.variable = variable;
+		this.type = type;
 		this.value = value;
 	}
 
@@ -66,6 +70,19 @@ public class MemoryElement {
 
 	public void setValue(String value) {
 		this.value = value;
+	}
+
+	public String getType() {
+		return type;
+	}
+
+	public void setType(String type) {
+		this.type = type;
+	}
+
+	@Override
+	public String toString() {
+		return "MemoryElement [id=" + id + ", callerSid=" + callerSid + ", variable=" + variable + ", type=" + type + ", value=" + value + "]";
 	}
 
 }

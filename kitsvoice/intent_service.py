@@ -123,7 +123,7 @@ def executionRule(intent):
     db_intent_rule.execute("select * from intentexecution where intent='"+intent+"' order by step desc")
     rules = []
     for row in db_intent_rule:
-        rules.append(row[2]+"#"+row[3])
+        rules.append(row[2]+"#"+row[3]+"#"+row[4])
     return dumps(rules)
 
 # start the webservice

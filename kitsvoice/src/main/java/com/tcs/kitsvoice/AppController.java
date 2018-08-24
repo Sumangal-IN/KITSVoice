@@ -96,8 +96,7 @@ public class AppController {
 			}
 			return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
 		}
-		if(intent.equals("EscapeIntent"))
-		{
+		if (intent.equals("EscapeIntent")) {
 			ActionElement actionElement = actionElementService.peek(callerSid);
 			actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 			return makeSpeech("Ok, is there anything else I can help you with?", callerSid);
@@ -107,6 +106,7 @@ public class AppController {
 			String parameter = null;
 			String variable = null;
 			String value = null;
+			String datatype = null;
 			String speech[] = null;
 			String contextPath = null;
 			String expectedValue = null;
@@ -139,12 +139,18 @@ public class AppController {
 				switch (varType) {
 				case "dnumber":
 					value = getNumber(speechResult);
+					datatype = "number";
+					break;
+				case "dcurrency":
+					value = getNumber(speechResult);
+					datatype = "currency";
 					break;
 				case "dname":
 					value = speechResult;
+					datatype = "name";
 					break;
 				}
-				memoryElementService.put(new MemoryElement(callerSid, variable, value));
+				memoryElementService.put(new MemoryElement(callerSid, variable, datatype, value));
 				actionElementService.pop(callerSid);
 				break;
 			case "POP_LAST_ACTION":
@@ -188,19 +194,22 @@ public class AppController {
 					return makeSpeech(speech, callerSid);
 				}
 				break;
-			case "RESOLVE_TYPE_NUMBER":
+			case "RESOLVE_TYPE":
 				actionElementService.pop(callerSid);
+				datatype = actionElement.getParameter();
 				if (actionElementService.peek(callerSid).getAction().equals("VARIABLE_REQUIRED")) {
 					variable = actionElementService.peek(callerSid).getParameter().split("\\|")[0];
-					value = getNumber(speechResult);
-					memoryElementService.put(new MemoryElement(callerSid, variable, value));
+					if (datatype.equals("dnumber"))
+						value = getNumber(speechResult);
+					memoryElementService.put(new MemoryElement(callerSid, variable, datatype, value));
 				}
 				break;
 			case "MEMORY_INSERT":
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
-				value = parameter.split("\\|")[1];
-				memoryElementService.put(new MemoryElement(callerSid, variable, value));
+				datatype = parameter.split("\\|")[1];
+				value = parameter.split("\\|")[2];
+				memoryElementService.put(new MemoryElement(callerSid, variable, datatype, value));
 				actionElementService.pop(callerSid);
 				break;
 			case "MEMORY_REMOVE":
@@ -225,7 +234,7 @@ public class AppController {
 			boolean match_found = false;
 			List<String> expectedIntents = Arrays.asList(actionElementService.peek(callerSid).getExpectedIntent().split(","));
 			for (String expectedIntent : expectedIntents) {
-				if (expectedIntent!=null && expectedIntent.equals(intent)) {
+				if (expectedIntent != null && expectedIntent.equals(intent)) {
 					match_found = true;
 					break;
 				}
@@ -296,7 +305,16 @@ public class AppController {
 		JsonElement jsonElement = parser.parse(json);
 		JsonObject jsonObject = jsonElement.getAsJsonObject();
 		for (Entry<String, JsonElement> entry : jsonObject.entrySet()) {
-			memoryElementService.put(new MemoryElement(callerSid, entry.getKey(), entry.getValue().getAsString()));
+			String datatype = null;
+			if (!entry.getKey().endsWith("type")) {
+				for (Entry<String, JsonElement> entry2 : jsonObject.entrySet()) {
+					if (entry2.getKey().equals(entry.getKey() + ".type")) {
+						datatype = entry2.getValue().getAsString();
+						break;
+					}
+				}
+				memoryElementService.put(new MemoryElement(callerSid, entry.getKey(), datatype, entry.getValue().getAsString()));
+			}
 		}
 	}
 
