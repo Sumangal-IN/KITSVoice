@@ -82,6 +82,7 @@ public class AppController {
 	}
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
+		RestTemplate restTemplate = new RestTemplate();
 		if (!loadIntent(callerSid, intent, true)) {
 			String lastSpeech = "";
 			ActionElement actionElement = actionElementService.peek(callerSid);
@@ -120,17 +121,18 @@ public class AppController {
 				actionElementService.pop(callerSid);
 				break;
 			case "EXECUTE":
-				// contextPath = actionElement.getParameter();
-				// contextPath = variableSubsitutionFromMemory(contextPath, callerSid);
-				// String serviceURL = addProtocolAndHost(contextPath);
+				contextPath = actionElement.getParameter();
+				contextPath = variableSubsitutionFromMemory(contextPath, callerSid);
+				String serviceURL = addProtocolAndHost(contextPath);
 				// String resultAsJSON = restTemplate.getForObject(serviceURL, String.class);
-				String resultAsJSON = "{\"orderStatus\":\"Ready for shipment\",\"orderNumber_rel_customerID\":\"true\",\"orderCancellable\":\"false\",\"reasonOrderNotCancellable\":\"order already dispatched\"}";
+				String resultAsJSON = "{\"relation.customer.customerID.customer.mobileNumber\":\"true\"}";
 				populateMemoryFromJSON(callerSid, resultAsJSON);
 				actionElementService.pop(callerSid);
 				break;
 			case "PLAY_RANDOM":
 				speech = actionElement.getParameter().split(":");
-				actionElementService.pop(callerSid);
+				if (actionElement.getExpectedIntent() == null)
+					actionElementService.pop(callerSid);
 				return makeSpeech(speech, callerSid);
 			case "EVALUATE_VARIABLE":
 				parameter = actionElement.getParameter();
@@ -232,6 +234,7 @@ public class AppController {
 	private boolean loadIntent(String callerSid, String intent, boolean checkExpectedIntent) {
 		if (checkExpectedIntent && !actionElementService.isEmpty(callerSid)) {
 			boolean match_found = false;
+			System.out.println("Expected intents:" + Arrays.asList(actionElementService.peek(callerSid).getExpectedIntent()));
 			List<String> expectedIntents = Arrays.asList(actionElementService.peek(callerSid).getExpectedIntent().split(","));
 			for (String expectedIntent : expectedIntents) {
 				if (expectedIntent != null && expectedIntent.equals(intent)) {
@@ -241,6 +244,8 @@ public class AppController {
 			}
 			if (!match_found)
 				return false;
+			if (actionElementService.peek(callerSid).getAction().equals("PLAY_RANDOM"))
+				actionElementService.pop(callerSid);
 		}
 		RestTemplate restTemplate = new RestTemplate();
 		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class, intent);
@@ -342,9 +347,11 @@ public class AppController {
 	}
 
 	private static String filter(String text) {
+
 		// Remove multilple spaces (at begining)
 		while (text.contains("  "))
 			text = text.replaceAll("  ", " ");
+
 		// Resolve contraction
 		text = text.replaceAll("let's", "let us");
 		text = text.replaceAll("he's", "he has");
@@ -357,6 +364,7 @@ public class AppController {
 		text = text.replaceAll("'re", " are");
 		text = text.replaceAll("'d", " had");
 		text = text.replaceAll("'ll", " will");
+
 		// text to digit
 		text = text.replaceAll("one", "1");
 		text = text.replaceAll("two", "2");
@@ -368,23 +376,42 @@ public class AppController {
 		text = text.replaceAll("eight", "8");
 		text = text.replaceAll("nine", "9");
 		text = text.replaceAll("zero", "0");
+
 		// Symbol removal
 		Matcher matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
 		while (matcher.find()) {
 			text = text.replace(matcher.group(0), "");
 			matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
 		}
+
+		// Digit multiplier
+		matcher = Pattern.compile("double\\s+\\d").matcher(text);
+		while (matcher.find()) {
+			String x = matcher.group(0).replaceAll("double", "").replaceAll(" ", "");
+			text = text.replace(matcher.group(0), x + x);
+			matcher = Pattern.compile("double\\s+\\d").matcher(text);
+		}
+
+		matcher = Pattern.compile("triple\\s+\\d").matcher(text);
+		while (matcher.find()) {
+			String x = matcher.group(0).replaceAll("triple", "").replaceAll(" ", "");
+			text = text.replace(matcher.group(0), x + x + x);
+			matcher = Pattern.compile("triple\\s+\\d").matcher(text);
+		}
+
 		// Digit compaction
 		matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
 		while (matcher.find()) {
 			text = text.replace(matcher.group(0), matcher.group(0).replaceAll("\\s+", ""));
 			matcher = Pattern.compile("\\d+\\s+\\d+").matcher(text);
 		}
+
 		// Remove multilple spaces (at end)
 		while (text.contains("  "))
 			text = text.replaceAll("  ", " ");
 
 		return text;
+
 	}
 
 }
