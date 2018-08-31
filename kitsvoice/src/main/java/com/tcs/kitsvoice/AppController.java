@@ -61,7 +61,7 @@ public class AppController {
 		System.out.println("LOG_WATCH " + new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())).toString());
 		logger.info("LOG_WATCH " + new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())).toString());
 		Say say = new Say.Builder("Hello, Welcome to virtual call center").build();
-		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN).action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 		return response.toXml();
@@ -83,20 +83,23 @@ public class AppController {
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
 		RestTemplate restTemplate = new RestTemplate();
-		if (!loadIntent(callerSid, intent, true)) {
-			String lastSpeech = "";
-			ActionElement actionElement = actionElementService.peek(callerSid);
-			if (actionElement.getAction().equals("PLAY_RANDOM")) {
-				String parameter = actionElement.getParameter();
-				String[] speech = parameter.split(":");
-				lastSpeech = getSpeech(speech, callerSid);
-			} else if (actionElementService.peek(callerSid).getAction().equals("VARIABLE_REQUIRED")) {
-				String parameter = actionElement.getParameter();
-				String[] speech = parameter.split("\\|")[1].split(":");
-				lastSpeech = getSpeech(speech, callerSid);
+		if (memoryElementService.get(callerSid, "expectedIntents") != null) {
+			List<String> expectedIntents = Arrays.asList(memoryElementService.get(callerSid, "expectedIntents").getValue().split(","));
+			String lastSpeech = memoryElementService.get(callerSid, "lastSpeech").getValue();
+			boolean expectedIntentMatched = false;
+			for (String expectedIntent : expectedIntents) {
+				if (expectedIntent.equals(intent)) {
+					expectedIntentMatched = true;
+					memoryElementService.delete(callerSid, "expectedIntents");
+					memoryElementService.delete(callerSid, "lastSpeech");
+					break;
+				}
 			}
-			return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
+			if (!expectedIntentMatched)
+				return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
 		}
+		loadIntent(callerSid, intent);
+
 		if (intent.equals("EscapeIntent")) {
 			ActionElement actionElement = actionElementService.peek(callerSid);
 			actionElementService.remove(callerSid, "intent", actionElement.getIntent());
@@ -111,28 +114,38 @@ public class AppController {
 			String speech[] = null;
 			String contextPath = null;
 			String expectedValue = null;
+
 			switch (actionElement.getAction()) {
 			case "VARIABLE_REQUIRED":
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
 				speech = parameter.split("\\|")[1].split(":");
-				if (memoryElementService.get(callerSid, variable) == null)
+				if (memoryElementService.get(callerSid, variable) == null) {
+					if (!(actionElement.getExpectedIntent() == null)) {
+						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string", actionElement.getExpectedIntent()));
+						memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter().split("\\|")[1]));
+					}
 					return makeSpeech(speech, callerSid);
+				}
 				actionElementService.pop(callerSid);
 				break;
 			case "EXECUTE":
 				contextPath = actionElement.getParameter();
 				contextPath = variableSubsitutionFromMemory(contextPath, callerSid);
 				String serviceURL = addProtocolAndHost(contextPath);
+				System.out.println(serviceURL);
 				// String resultAsJSON = restTemplate.getForObject(serviceURL, String.class);
-				String resultAsJSON = "{\"relation.customer.customerID.customer.mobileNumber\":\"true\"}";
+				String resultAsJSON = "{\"relation.order.orderNumber.customer.customerID\":\"true\",\"order.orderState\":\"abcd\"}";
 				populateMemoryFromJSON(callerSid, resultAsJSON);
 				actionElementService.pop(callerSid);
 				break;
 			case "PLAY_RANDOM":
 				speech = actionElement.getParameter().split(":");
-				if (actionElement.getExpectedIntent() == null)
-					actionElementService.pop(callerSid);
+				if (!(actionElement.getExpectedIntent() == null)) {
+					memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string", actionElement.getExpectedIntent()));
+					memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
+				}
+				actionElementService.pop(callerSid);
 				return makeSpeech(speech, callerSid);
 			case "EVALUATE_VARIABLE":
 				parameter = actionElement.getParameter();
@@ -177,7 +190,7 @@ public class AppController {
 			case "LOAD_INTENT":
 				actionElementService.pop(callerSid);
 				parameter = actionElement.getParameter();
-				loadIntent(callerSid, parameter, false);
+				loadIntent(callerSid, parameter);
 				break;
 			case "VALIDATE_VARIABLE":
 				actionElementService.pop(callerSid);
@@ -193,6 +206,10 @@ public class AppController {
 					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 					if (!intentToLoad.equals(""))
 						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT", intentToLoad, null));
+					if ((actionElement.getExpectedIntent() == null)) {
+						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string", actionElement.getExpectedIntent()));
+						memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
+					}
 					return makeSpeech(speech, callerSid);
 				}
 				break;
@@ -231,22 +248,7 @@ public class AppController {
 		}
 	}
 
-	private boolean loadIntent(String callerSid, String intent, boolean checkExpectedIntent) {
-		if (checkExpectedIntent && !actionElementService.isEmpty(callerSid)) {
-			boolean match_found = false;
-			System.out.println("Expected intents:" + Arrays.asList(actionElementService.peek(callerSid).getExpectedIntent()));
-			List<String> expectedIntents = Arrays.asList(actionElementService.peek(callerSid).getExpectedIntent().split(","));
-			for (String expectedIntent : expectedIntents) {
-				if (expectedIntent != null && expectedIntent.equals(intent)) {
-					match_found = true;
-					break;
-				}
-			}
-			if (!match_found)
-				return false;
-			if (actionElementService.peek(callerSid).getAction().equals("PLAY_RANDOM"))
-				actionElementService.pop(callerSid);
-		}
+	private void loadIntent(String callerSid, String intent) {
 		RestTemplate restTemplate = new RestTemplate();
 		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class, intent);
 		JsonElement ruleSet = parser.parse(rules);
@@ -254,7 +256,6 @@ public class AppController {
 			System.out.println(rule);
 			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#").length > 0 ? rule.getAsString().split("#")[0] : null, rule.getAsString().split("#").length > 1 ? rule.getAsString().split("#")[1] : null, rule.getAsString().split("#").length > 2 ? rule.getAsString().split("#")[2] : null));
 		}
-		return true;
 	}
 
 	private String makeSpeech(String speech, String callerSid) {
@@ -269,7 +270,7 @@ public class AppController {
 			return response.toXml();
 		}
 		Say say = new Say.Builder(speech).build();
-		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 		return response.toXml();
@@ -284,7 +285,7 @@ public class AppController {
 	private String makeSpeech(String[] speech, String callerSid) {
 		String randomSpeech = getSpeech(speech, callerSid);
 		Say say = new Say.Builder(randomSpeech).build();
-		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 		return response.toXml();
