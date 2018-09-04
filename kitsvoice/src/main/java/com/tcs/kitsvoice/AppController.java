@@ -33,6 +33,7 @@ import com.tcs.kitsvoice.service.MemoryElementService;
 import com.twilio.http.HttpMethod;
 import com.twilio.twiml.VoiceResponse;
 import com.twilio.twiml.voice.Gather;
+import com.twilio.twiml.voice.Redirect;
 import com.twilio.twiml.voice.Say;
 
 @EnableAutoConfiguration
@@ -56,12 +57,12 @@ public class AppController {
 
 	@RequestMapping(value = "/attendCall", method = RequestMethod.POST, produces = { "application/xml" })
 	@ResponseBody
-	public String attendCall(@RequestParam("Called") String callerNumber, @RequestParam("CallSid") String callSid) {
-		callerIDRepository.save(new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())));
+	public String attendCall(@RequestParam("Called") String callerNumber, @RequestParam("CallSid") String callerSid) {
+		callerIDRepository.save(new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())));
 		System.out.println("LOG_WATCH "
-				+ new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())).toString());
+				+ new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())).toString());
 		logger.info("LOG_WATCH "
-				+ new CallerID(callerNumber, callSid, new Timestamp(System.currentTimeMillis())).toString());
+				+ new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())).toString());
 		Say say = new Say.Builder("Hello, Welcome to virtual call center").build();
 		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN)
 				.action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST)
@@ -75,21 +76,29 @@ public class AppController {
 
 	@RequestMapping(value = "/completed", method = RequestMethod.POST, produces = { "application/xml" })
 	@ResponseBody
-	public String finalresult(@RequestParam("SpeechResult") String speechResult,
+	public String finalresult(@RequestParam(value = "SpeechResult", required = false) String speechResult,
 			@RequestParam("CallSid") String callerSid) {
-		System.out.println("speechResult: " + speechResult);
-		speechResult = filter(speechResult);
-		RestTemplate restTemplate = new RestTemplate();
-		String intents = restTemplate.getForObject("https://fec63322.ngrok.io/getIntent/{speech}", String.class,
-				valueSubsitutionForType(speechResult));
-		JsonElement intent = parser.parse(intents);
-		System.out.println(intent.getAsJsonArray().get(0).getAsString());
-		return processIntent(callerSid, intent.getAsJsonArray().get(0).getAsString(), speechResult);
+		if (speechResult != null) {
+			if (memoryElementService.get(callerSid, "param.misunderstanding") == null)
+				memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number", "0"));
+			System.out.println("speechResult: " + speechResult);
+			speechResult = filter(speechResult);
+			System.out.println("speechResult (post-filter): " + speechResult);
+			RestTemplate restTemplate = new RestTemplate();
+			String intents = restTemplate.getForObject("https://fec63322.ngrok.io/getIntent/{speech}", String.class,
+					valueSubsitutionForType(speechResult));
+			JsonElement intent = parser.parse(intents);
+			System.out.println(intent.getAsJsonArray().get(0).getAsString());
+			return processIntent(callerSid, intent.getAsJsonArray().get(0).getAsString(), speechResult);
+		} else {
+			return processIntent(callerSid, null, "");
+		}
 	}
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
 		RestTemplate restTemplate = new RestTemplate();
-		if (memoryElementService.get(callerSid, "expectedIntents") != null) {
+		if (memoryElementService.get(callerSid, "expectedIntents") != null
+				&& memoryElementService.get(callerSid, "expectedIntents").getValue() != null) {
 			List<String> expectedIntents = Arrays
 					.asList(memoryElementService.get(callerSid, "expectedIntents").getValue().split(","));
 			String lastSpeech = memoryElementService.get(callerSid, "lastSpeech").getValue();
@@ -102,24 +111,36 @@ public class AppController {
 					break;
 				}
 			}
-			if (!expectedIntentMatched)
-				return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
+			if (!expectedIntentMatched) {
+				int misunderstanding = Integer
+						.parseInt(memoryElementService.get(callerSid, "param.misunderstanding").getValue());
+				misunderstanding++;
+				memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number",
+						Integer.toString(misunderstanding)));
+				if (misunderstanding < 3)
+					return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
+				return makeSpeech(
+						"Sorry I could not understand what you just said, please connect with our executive, thank you",
+						callerSid, true);
+			}
+			memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number", "0"));
 		}
+		if (intent != null) {
+			loadIntent(callerSid, intent);
 
-		loadIntent(callerSid, intent);
-
-		if (intent.equals("EscapeIntent")) {
-			ActionElement actionElement = actionElementService.peek(callerSid);
-			actionElementService.remove(callerSid, "intent", actionElement.getIntent());
-			return makeSpeech("Ok, is there anything else I can help you with?", callerSid);
+			if (intent.equals("EscapeIntent")) {
+				ActionElement actionElement = actionElementService.peek(callerSid);
+				actionElementService.remove(callerSid, "intent", actionElement.getIntent());
+				return makeSpeech("Ok, is there anything else I can help you with?", callerSid);
+			}
 		}
-
 		while (true) {
 			ActionElement actionElement = actionElementService.peek(callerSid);
-			if (actionElement == null)
+			if (actionElement == null) {
 				return makeSpeech(
-						"Sorry I could not understand what you just said, could you repeat that again, please?",
+						"Sorry I could not understand what you just said, could you repeat that again, please",
 						callerSid);
+			}
 			String parameter = null;
 			String variable = null;
 			String value = null;
@@ -218,27 +239,29 @@ public class AppController {
 
 				if (memoryElementService.get(callerSid, variable) != null
 						&& memoryElementService.get(callerSid, variable).getValue().equals(expectedValue)) {
-					if (parameter.split("\\|").length > 2 && parameter.split("\\|")[2] != "") {
+					if (parameter.split("\\|").length > 2 && !parameter.split("\\|")[2].equals("")) {
 						List<String> variablesToRemove = Arrays.asList(parameter.split("\\|")[2].split(","));
 						for (String variableToRemove : variablesToRemove)
-							memoryElementService.delete(callerSid, variableToRemove);						
+							memoryElementService.delete(callerSid, variableToRemove);
 					}
 
-					if (parameter.split("\\|").length > 3 && parameter.split("\\|")[3] != "") {
-						actionElementService.remove(callerSid, "intent", actionElement.getIntent());
+					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
+
+					if (parameter.split("\\|").length > 3 && !parameter.split("\\|")[3].equals("")) {
 						String intentToLoad = parameter.split("\\|")[3];
 						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT",
 								intentToLoad, null));
+					}
 
-						if ((actionElement.getExpectedIntent() == null)) {
-							memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string",
-									actionElement.getExpectedIntent()));
-							memoryElementService.put(
-									new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
-						}
+					if ((actionElement.getExpectedIntent() == null)) {
+						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string",
+								actionElement.getExpectedIntent()));
+						memoryElementService.put(
+								new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
+					}
 
-						if (parameter.split("\\|").length > 4 && parameter.split("\\|")[4] != "")
-							speech = parameter.split("\\|")[4].split(":");
+					if (parameter.split("\\|").length > 4 && parameter.split("\\|")[4] != "") {
+						speech = parameter.split("\\|")[4].split(":");
 						return makeSpeech(speech, callerSid);
 					}
 				}
@@ -277,6 +300,9 @@ public class AppController {
 						&& memoryElementService.get(callerSid, variable).getValue().equals(expectedValue))
 					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 				break;
+			case "WAIT":
+				actionElementService.pop(callerSid);
+				return makeWait();
 			}
 		}
 	}
@@ -311,6 +337,13 @@ public class AppController {
 				.action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
+		return response.toXml();
+	}
+
+	private String makeWait() {
+		Say say = new Say.Builder("please wait while I process your information").build();
+		Redirect redirect = new Redirect.Builder("/completed").method(HttpMethod.POST).build();
+		VoiceResponse response = new VoiceResponse.Builder().say(say).redirect(redirect).build();
 		return response.toXml();
 	}
 
@@ -464,6 +497,11 @@ public class AppController {
 
 		return text;
 
+	}
+	
+	public static void main(String args[])
+	{
+		System.out.println(filter("sorry it was not for you one of my colleagues passing 10000 20354"));
 	}
 
 }
