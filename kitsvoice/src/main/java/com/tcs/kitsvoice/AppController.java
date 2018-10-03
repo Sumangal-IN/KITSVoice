@@ -59,14 +59,10 @@ public class AppController {
 	@ResponseBody
 	public String attendCall(@RequestParam("Called") String callerNumber, @RequestParam("CallSid") String callerSid) {
 		callerIDRepository.save(new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())));
-		System.out.println("LOG_WATCH "
-				+ new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())).toString());
-		logger.info("LOG_WATCH "
-				+ new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())).toString());
-		Say say = new Say.Builder("Hello, Welcome to virtual call center").build();
-		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN)
-				.action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST)
-				.speechTimeout("auto").say(say).build();
+		System.out.println("LOG_WATCH " + new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())).toString());
+		logger.info("LOG_WATCH " + new CallerID(callerNumber, callerSid, new Timestamp(System.currentTimeMillis())).toString());
+		Say say = new Say.Builder("Hello, Welcome to virtual call center, my name is iris, how can I help you?").build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN).action("/completed")/* .partialResultCallback("/partial") */.method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 		return response.toXml();
@@ -76,8 +72,7 @@ public class AppController {
 
 	@RequestMapping(value = "/completed", method = RequestMethod.POST, produces = { "application/xml" })
 	@ResponseBody
-	public String finalresult(@RequestParam(value = "SpeechResult", required = false) String speechResult,
-			@RequestParam("CallSid") String callerSid) {
+	public String finalresult(@RequestParam(value = "SpeechResult", required = false) String speechResult, @RequestParam("CallSid") String callerSid) {
 		if (speechResult != null) {
 			if (memoryElementService.get(callerSid, "param.misunderstanding") == null)
 				memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number", "0"));
@@ -85,8 +80,7 @@ public class AppController {
 			speechResult = filter(speechResult);
 			System.out.println("speechResult (post-filter): " + speechResult);
 			RestTemplate restTemplate = new RestTemplate();
-			String intents = restTemplate.getForObject("https://fec63322.ngrok.io/getIntent/{speech}", String.class,
-					valueSubsitutionForType(speechResult));
+			String intents = restTemplate.getForObject("http://localhost:9000/getIntent/{speech}", String.class, valueSubsitutionForType(speechResult));
 			JsonElement intent = parser.parse(intents);
 			System.out.println(intent.getAsJsonArray().get(0).getAsString());
 			return processIntent(callerSid, intent.getAsJsonArray().get(0).getAsString(), speechResult);
@@ -97,10 +91,8 @@ public class AppController {
 
 	private String processIntent(String callerSid, String intent, String speechResult) {
 		RestTemplate restTemplate = new RestTemplate();
-		if (memoryElementService.get(callerSid, "expectedIntents") != null
-				&& memoryElementService.get(callerSid, "expectedIntents").getValue() != null) {
-			List<String> expectedIntents = Arrays
-					.asList(memoryElementService.get(callerSid, "expectedIntents").getValue().split(","));
+		if (memoryElementService.get(callerSid, "expectedIntents") != null && memoryElementService.get(callerSid, "expectedIntents").getValue() != null) {
+			List<String> expectedIntents = Arrays.asList(memoryElementService.get(callerSid, "expectedIntents").getValue().split(","));
 			String lastSpeech = memoryElementService.get(callerSid, "lastSpeech").getValue();
 			boolean expectedIntentMatched = false;
 			for (String expectedIntent : expectedIntents) {
@@ -112,16 +104,12 @@ public class AppController {
 				}
 			}
 			if (!expectedIntentMatched) {
-				int misunderstanding = Integer
-						.parseInt(memoryElementService.get(callerSid, "param.misunderstanding").getValue());
+				int misunderstanding = Integer.parseInt(memoryElementService.get(callerSid, "param.misunderstanding").getValue());
 				misunderstanding++;
-				memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number",
-						Integer.toString(misunderstanding)));
+				memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number", Integer.toString(misunderstanding)));
 				if (misunderstanding < 3)
 					return makeSpeech("Sorry I could not understand what you just said, " + lastSpeech, callerSid);
-				return makeSpeech(
-						"Sorry I could not understand what you just said, please connect with our executive, thank you",
-						callerSid, true);
+				return makeSpeech("Sorry I could not understand what you just said, please connect with our executive, thank you", callerSid, true);
 			}
 			memoryElementService.put(new MemoryElement(callerSid, "param.misunderstanding", "number", "0"));
 		}
@@ -137,9 +125,7 @@ public class AppController {
 		while (true) {
 			ActionElement actionElement = actionElementService.peek(callerSid);
 			if (actionElement == null) {
-				return makeSpeech(
-						"Sorry I could not understand what you just said, could you repeat that again, please",
-						callerSid);
+				return makeSpeech("Sorry I could not understand what you just said, could you repeat that again, please", callerSid);
 			}
 			String parameter = null;
 			String variable = null;
@@ -156,10 +142,8 @@ public class AppController {
 				speech = parameter.split("\\|")[1].split(":");
 				if (memoryElementService.get(callerSid, variable) == null) {
 					if (!(actionElement.getExpectedIntent() == null)) {
-						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string",
-								actionElement.getExpectedIntent()));
-						memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string",
-								actionElement.getParameter().split("\\|")[1]));
+						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string", actionElement.getExpectedIntent()));
+						memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter().split("\\|")[1]));
 					}
 					return makeSpeech(speech, callerSid);
 				}
@@ -179,10 +163,8 @@ public class AppController {
 			case "PLAY_RANDOM":
 				speech = actionElement.getParameter().split(":");
 				if (!(actionElement.getExpectedIntent() == null)) {
-					memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string",
-							actionElement.getExpectedIntent()));
-					memoryElementService
-							.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
+					memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string", actionElement.getExpectedIntent()));
+					memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
 				}
 				actionElementService.pop(callerSid);
 				return makeSpeech(speech, callerSid);
@@ -237,8 +219,7 @@ public class AppController {
 				variable = parameter.split("\\|")[0];
 				expectedValue = parameter.split("\\|")[1];
 
-				if (memoryElementService.get(callerSid, variable) != null
-						&& memoryElementService.get(callerSid, variable).getValue().equals(expectedValue)) {
+				if (memoryElementService.get(callerSid, variable) != null && memoryElementService.get(callerSid, variable).getValue().equals(expectedValue)) {
 					if (parameter.split("\\|").length > 2 && !parameter.split("\\|")[2].equals("")) {
 						List<String> variablesToRemove = Arrays.asList(parameter.split("\\|")[2].split(","));
 						for (String variableToRemove : variablesToRemove)
@@ -249,15 +230,12 @@ public class AppController {
 
 					if (parameter.split("\\|").length > 3 && !parameter.split("\\|")[3].equals("")) {
 						String intentToLoad = parameter.split("\\|")[3];
-						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT",
-								intentToLoad, null));
+						actionElementService.push(new ActionElement(callerSid, actionElement.getIntent(), "LOAD_INTENT", intentToLoad, null));
 					}
 
 					if ((actionElement.getExpectedIntent() == null)) {
-						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string",
-								actionElement.getExpectedIntent()));
-						memoryElementService.put(
-								new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
+						memoryElementService.put(new MemoryElement(callerSid, "expectedIntents", "string", actionElement.getExpectedIntent()));
+						memoryElementService.put(new MemoryElement(callerSid, "lastSpeech", "string", actionElement.getParameter()));
 					}
 
 					if (parameter.split("\\|").length > 4 && parameter.split("\\|")[4] != "") {
@@ -296,28 +274,33 @@ public class AppController {
 				parameter = actionElement.getParameter();
 				variable = parameter.split("\\|")[0];
 				expectedValue = parameter.split("\\|")[1];
-				if (memoryElementService.get(callerSid, variable) != null
-						&& memoryElementService.get(callerSid, variable).getValue().equals(expectedValue))
+				if (memoryElementService.get(callerSid, variable) != null && memoryElementService.get(callerSid, variable).getValue().equals(expectedValue))
 					actionElementService.remove(callerSid, "intent", actionElement.getIntent());
 				break;
 			case "WAIT":
 				actionElementService.pop(callerSid);
 				return makeWait();
+			case "EVALUATE_REGEX":
+				variable = actionElement.getParameter().split("\\|")[0];
+				String regex = actionElement.getParameter().split("\\|")[1];
+				String valid_param = actionElement.getParameter().split("\\|")[2];
+				Matcher matcher = Pattern.compile(regex).matcher(memoryElementService.get(callerSid, variable).getValue());
+				memoryElementService.delete(callerSid, valid_param);
+				if (!matcher.find()) {
+					memoryElementService.put(new MemoryElement(callerSid, valid_param, "boolean", "false"));
+				}
+				actionElementService.pop(callerSid);
 			}
 		}
 	}
 
 	private void loadIntent(String callerSid, String intent) {
 		RestTemplate restTemplate = new RestTemplate();
-		String rules = restTemplate.getForObject("https://fec63322.ngrok.io/executionRule/{intent}", String.class,
-				intent);
+		String rules = restTemplate.getForObject("http://localhost:9000/executionRule/{intent}", String.class, intent);
 		JsonElement ruleSet = parser.parse(rules);
 		for (JsonElement rule : ruleSet.getAsJsonArray()) {
 			System.out.println(rule);
-			actionElementService.push(new ActionElement(callerSid, intent,
-					rule.getAsString().split("#").length > 0 ? rule.getAsString().split("#")[0] : null,
-					rule.getAsString().split("#").length > 1 ? rule.getAsString().split("#")[1] : null,
-					rule.getAsString().split("#").length > 2 ? rule.getAsString().split("#")[2] : null));
+			actionElementService.push(new ActionElement(callerSid, intent, rule.getAsString().split("#").length > 0 ? rule.getAsString().split("#")[0] : null, rule.getAsString().split("#").length > 1 ? rule.getAsString().split("#")[1] : null, rule.getAsString().split("#").length > 2 ? rule.getAsString().split("#")[2] : null));
 		}
 	}
 
@@ -333,8 +316,7 @@ public class AppController {
 			return response.toXml();
 		}
 		Say say = new Say.Builder(speech).build();
-		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN)
-				.action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 		return response.toXml();
@@ -356,8 +338,7 @@ public class AppController {
 	private String makeSpeech(String[] speech, String callerSid) {
 		String randomSpeech = getSpeech(speech, callerSid);
 		Say say = new Say.Builder(randomSpeech).build();
-		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN)
-				.action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
+		Gather gather = new Gather.Builder().inputs(Arrays.asList(Gather.Input.SPEECH)).language(Gather.Language.EN_IN).action("/completed").method(HttpMethod.POST).speechTimeout("auto").say(say).build();
 		Say say2 = new Say.Builder("We didn't receive any input. Goodbye!").build();
 		VoiceResponse response = new VoiceResponse.Builder().gather(gather).say(say2).build();
 		return response.toXml();
@@ -391,25 +372,23 @@ public class AppController {
 						break;
 					}
 				}
-				memoryElementService
-						.put(new MemoryElement(callerSid, entry.getKey(), datatype, entry.getValue().getAsString()));
+				memoryElementService.put(new MemoryElement(callerSid, entry.getKey(), datatype, entry.getValue().getAsString()));
 			}
 		}
 	}
 
 	public String addProtocolAndHost(String contextPath) {
-		return "http://localhost:8000" + contextPath;
+		return "http://localhost:9090" + contextPath;
+		//return "http://localhost:8001" + contextPath;
 	}
 
 	public String variableSubsitutionFromMemory(String input, String callerSid, boolean forOutputSpeech) {
 		while (input.contains("[")) {
 			String placeholder = input.substring(input.indexOf('['), input.indexOf(']') + 1);
-			MemoryElement replacements = memoryElementService.get(callerSid,
-					placeholder.substring(1, placeholder.length() - 1));
+			MemoryElement replacements = memoryElementService.get(callerSid, placeholder.substring(1, placeholder.length() - 1));
 			if (replacements != null) {
 				if (forOutputSpeech)
-					input = input.replace(placeholder,
-							getOutputWithType(replacements.getValue(), replacements.getType()));
+					input = input.replace(placeholder, getOutputWithType(replacements.getValue(), replacements.getType()));
 				else
 					input = input.replace(placeholder, replacements.getValue());
 			} else
@@ -451,22 +430,46 @@ public class AppController {
 		text = text.replaceAll("'ll", " will");
 
 		// text to digit
-		text = text.replaceAll("one", "1");
-		text = text.replaceAll("two", "2");
-		text = text.replaceAll("three", "3");
-		text = text.replaceAll("four", "4");
-		text = text.replaceAll("five", "5");
-		text = text.replaceAll("six", "6");
-		text = text.replaceAll("seven", "7");
-		text = text.replaceAll("eight", "8");
-		text = text.replaceAll("nine", "9");
-		text = text.replaceAll("zero", "0");
+		text = text.replaceAll(" one " , " 1 ");
+		text = text.replaceAll(" two ", " 2 ");
+		text = text.replaceAll(" three ", " 3 ");
+		text = text.replaceAll(" four ", " 4 ");
+		text = text.replaceAll(" five ", " 5 ");
+		text = text.replaceAll(" six ", " 6 ");
+		text = text.replaceAll(" seven ", " 7 ");
+		text = text.replaceAll(" eight ", " 8 ");
+		text = text.replaceAll(" nine ", " 9 ");
+		text = text.replaceAll(" zero ", " 0 ");
 
 		// Symbol removal
 		Matcher matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
 		while (matcher.find()) {
 			text = text.replace(matcher.group(0), "");
 			matcher = Pattern.compile("[^(a-z)(0-9)(A-Z)\\s]+").matcher(text);
+		}
+
+		// Resolve special appearance of "to"
+		matcher = Pattern.compile("\\d+\\s+to\\s+\\d+").matcher(text);
+		while (matcher.find()) {
+			String x = matcher.group(0).replaceAll("\\s+to\\s+", "2");
+			text = text.replace(matcher.group(0), x);
+			matcher = Pattern.compile("\\d+\\s+to\\s+\\d+").matcher(text);
+		}
+
+		// Resolve special appearance of "for"
+		matcher = Pattern.compile("\\d+\\s+for\\s+\\d+").matcher(text);
+		while (matcher.find()) {
+			String x = matcher.group(0).replaceAll("\\s+for\\s+", "4");
+			text = text.replace(matcher.group(0), x);
+			matcher = Pattern.compile("\\d+\\s+for\\s+\\d+").matcher(text);
+		}
+
+		// Resolve special appearance of "it"
+		matcher = Pattern.compile("\\d+\\s+it\\s+\\d+").matcher(text);
+		while (matcher.find()) {
+			String x = matcher.group(0).replaceAll("\\s+it\\s+", "8");
+			text = text.replace(matcher.group(0), x);
+			matcher = Pattern.compile("\\d+\\s+it\\s+\\d+").matcher(text);
 		}
 
 		// Digit multiplier
@@ -498,10 +501,9 @@ public class AppController {
 		return text;
 
 	}
-	
-	public static void main(String args[])
-	{
-		System.out.println(filter("sorry it was not for you one of my colleagues passing 10000 20354"));
+
+	public static void main(String args[]) {
+		System.out.println(filter("I want to cancel my order number one to 3 four honey and I want to cancel my order number 1 to 34"));
 	}
 
 }

@@ -22,6 +22,7 @@ import mysql.connector as dbConnect
 mydb = dbConnect.connect(
   host="localhost",
   user="root",
+  password="root",
   database="voiceapp"
 )
 

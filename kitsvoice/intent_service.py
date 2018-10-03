@@ -29,6 +29,7 @@ import mysql.connector as dbConnect
 mydb = dbConnect.connect(
   host="localhost",
   user="root",
+  password="root",
   database="voiceapp"
 )
 
@@ -127,4 +128,4 @@ def executionRule(intent):
     return dumps(rules)
 
 # start the webservice
-app.run(host='0.0.0.0', port=8000)
+app.run(host='localhost', port=9000)
