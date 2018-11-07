@@ -22,7 +22,6 @@ import mysql.connector as dbConnect
 mydb = dbConnect.connect(
   host="localhost",
   user="root",
-  password="root",
   database="voiceapp"
 )
 
@@ -102,7 +101,7 @@ net = tflearn.regression(net)
 # Define model and setup tensorboard
 model = tflearn.DNN(net, tensorboard_dir='tflearn_logs')
 # Start training (apply gradient descent algorithm)
-model.fit(train_x, train_y, n_epoch=2000, batch_size=8, show_metric=True)
+model.fit(train_x, train_y, n_epoch=1000, batch_size=8, show_metric=True)
 model.save('model.tflearn')
 
 def clean_up_sentence(sentence):
